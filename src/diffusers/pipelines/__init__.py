@@ -298,6 +298,7 @@ else:
     _import_structure["aura_flow"] = ["AuraFlowPipeline"]
     _import_structure["stable_diffusion_3"] = [
         "StableDiffusion3Pipeline",
+        "StableDiffusion3Pipeline_pos",
         "StableDiffusion3Img2ImgPipeline",
         "StableDiffusion3InpaintPipeline",
     ]
@@ -650,6 +651,7 @@ if TYPE_CHECKING or DIFFUSERS_SLOW_IMPORT:
             StableDiffusion3Img2ImgPipeline,
             StableDiffusion3InpaintPipeline,
             StableDiffusion3Pipeline,
+            StableDiffusion3Pipeline_pos,
         )
         from .stable_diffusion_attend_and_excite import StableDiffusionAttendAndExcitePipeline
         from .stable_diffusion_diffedit import StableDiffusionDiffEditPipeline

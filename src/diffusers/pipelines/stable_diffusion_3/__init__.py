@@ -23,7 +23,7 @@ except OptionalDependencyNotAvailable:
 
     _dummy_objects.update(get_objects_from_module(dummy_torch_and_transformers_objects))
 else:
-    _import_structure["pipeline_stable_diffusion_3"] = ["StableDiffusion3Pipeline"]
+    _import_structure["pipeline_stable_diffusion_3"] = ["StableDiffusion3Pipeline", "StableDiffusion3Pipeline_pos"]
     _import_structure["pipeline_stable_diffusion_3_img2img"] = ["StableDiffusion3Img2ImgPipeline"]
     _import_structure["pipeline_stable_diffusion_3_inpaint"] = ["StableDiffusion3InpaintPipeline"]
 
@@ -34,7 +34,7 @@ if TYPE_CHECKING or DIFFUSERS_SLOW_IMPORT:
     except OptionalDependencyNotAvailable:
         from ...utils.dummy_torch_and_transformers_objects import *  # noqa F403
     else:
-        from .pipeline_stable_diffusion_3 import StableDiffusion3Pipeline
+        from .pipeline_stable_diffusion_3 import StableDiffusion3Pipeline, StableDiffusion3Pipeline_pos
         from .pipeline_stable_diffusion_3_img2img import StableDiffusion3Img2ImgPipeline
         from .pipeline_stable_diffusion_3_inpaint import StableDiffusion3InpaintPipeline
 
