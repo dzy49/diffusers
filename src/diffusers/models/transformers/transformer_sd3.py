@@ -34,8 +34,15 @@ from ..embeddings import CombinedTimestepTextProjEmbeddings, PatchEmbed
 from ..modeling_outputs import Transformer2DModelOutput
 
 
-logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
+logger = logging.get_logger(__name__)  # pylint: disable=invalid-name\
 
+def zero_module(module):
+        """
+        Zero out the parameters of a module and return it.
+        """
+        for p in module.parameters():
+            p.detach().zero_()
+        return module
 
 @maybe_allow_in_graph
 class SD3SingleTransformerBlock(nn.Module):
@@ -102,7 +109,59 @@ class SD3SingleTransformerBlock(nn.Module):
 
         return hidden_states
 
+class CameraPosEmbedder(nn.Module):
+    
 
+
+    def __init__(self, output_dim=2048, dtype=torch.float16):
+        super().__init__()
+        #self.linear = nn.Linear(1, output_dim)
+        self.layers_yaw = nn.ModuleList([
+            nn.Linear(3, 128),
+            nn.GELU(),
+            nn.Linear(128, 256),
+            nn.GELU(),
+            nn.Linear(256, 512),
+            nn.GELU(),
+            nn.Linear(512, 1024),
+            nn.GELU(),
+        ])
+
+        self.layers_pitch = nn.ModuleList([
+            nn.Linear(3, 128),
+            nn.GELU(),
+            nn.Linear(128, 256),
+            nn.GELU(),
+            nn.Linear(256, 512),
+            nn.GELU(),
+            nn.Linear(512, 1024),
+            nn.GELU(),
+        ])
+
+        self.fusion = nn.Linear(1024, output_dim, dtype=dtype)
+        self.proj_out = zero_module(nn.Linear(output_dim, output_dim))
+
+    
+    
+    def forward(self, yaw, pitch):
+        # x shape: (batch_size, 4) or (4,)
+        #return self.linear(x)
+        yaw = yaw.half()
+        pitch = pitch.half()
+        for layer in self.layers_yaw:
+            yaw = layer(yaw)
+        
+        for layer in self.layers_pitch:
+            pitch = layer(pitch)
+
+        yaw = yaw.unsqueeze(-2)
+        pitch = pitch.unsqueeze(-2)
+        #print(yaw.shape)
+        combined = torch.cat([yaw, pitch], dim=-2)  # (batch_size, output_dim)
+        #print(combined.shape)
+        fused = self.fusion(combined)
+        return fused
+    
 class SD3Transformer2DModel(
     ModelMixin, ConfigMixin, PeftAdapterMixin, FromOriginalModelMixin, SD3Transformer2DLoadersMixin
 ):
@@ -166,6 +225,7 @@ class SD3Transformer2DModel(
         )
         self.context_embedder = nn.Linear(self.config.joint_attention_dim, self.config.caption_projection_dim)
 
+        self.cam_pos_embedder = CameraPosEmbedder()
         # `attention_head_dim` is doubled to account for the mixing.
         # It needs to crafted when we get the actual checkpoints.
         self.transformer_blocks = nn.ModuleList(

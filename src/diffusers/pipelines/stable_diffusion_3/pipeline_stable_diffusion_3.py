@@ -14,6 +14,7 @@
 
 import inspect
 from typing import Any, Callable, Dict, List, Optional, Union
+import math
 
 import torch
 from transformers import (
@@ -1194,7 +1195,7 @@ class StableDiffusion3Pipeline_pos(DiffusionPipeline, SD3LoraLoaderMixin, FromSi
         tokenizer_3: T5TokenizerFast,
         image_encoder: PreTrainedModel = None,
         feature_extractor: BaseImageProcessor = None,
-        cam_pos_embedder = None,
+        #cam_pos_embedder = None,
     ):
         super().__init__()
 
@@ -1210,7 +1211,8 @@ class StableDiffusion3Pipeline_pos(DiffusionPipeline, SD3LoraLoaderMixin, FromSi
             scheduler=scheduler,
             image_encoder=image_encoder,
             feature_extractor=feature_extractor,
-            cam_pos_embedder = cam_pos_embedder,
+            #cam_pos_embedder = cam_pos_embedder
+            #,
         )
         self.vae_scale_factor = 2 ** (len(self.vae.config.block_out_channels) - 1) if getattr(self, "vae", None) else 8
         self.image_processor = VaeImageProcessor(vae_scale_factor=self.vae_scale_factor)
@@ -1225,6 +1227,8 @@ class StableDiffusion3Pipeline_pos(DiffusionPipeline, SD3LoraLoaderMixin, FromSi
         self.patch_size = (
             self.transformer.config.patch_size if hasattr(self, "transformer") and self.transformer is not None else 2
         )
+        self.cam_pos_embedder = transformer.cam_pos_embedder
+        #print(self.cam_pos_embedder)
 
     def _get_t5_prompt_embeds(
         self,
@@ -1357,13 +1361,12 @@ class StableDiffusion3Pipeline_pos(DiffusionPipeline, SD3LoraLoaderMixin, FromSi
         #     yaw = yaw.unsqueeze(0)  # Add batch dimension
         # if pitch.dim() == 1:
         #     pitch = pitch.unsqueeze(0)
-        embedded = torch.stack([
+        yaw = torch.stack([
+            #yaw,
             yaw,
             torch.sin(yaw),
             torch.cos(yaw),
-            pitch,
-            torch.sin(pitch),
-            torch.cos(pitch),
+            #torch.deg2rad(torch.cos(yaw)),
             # lx,
             # ly,
             # lz,
@@ -1371,13 +1374,21 @@ class StableDiffusion3Pipeline_pos(DiffusionPipeline, SD3LoraLoaderMixin, FromSi
             # l_temp,
             # focal_len,
         ], dim=-1) 
+        pitch = torch.stack([
+           pitch,
+           torch.sin(pitch),
+           torch.cos(pitch),
+        ], dim=-1)
         # embedded = torch.cat((embedded, emotion), dim=-1)
-        embedded = torch.unsqueeze(embedded, -1)
+        #embedded = torch.unsqueeze(embedded, -1)
         #encoded = camera_pos_embedder(embedded)
         if device is not None:
             self.cam_pos_embedder = self.cam_pos_embedder.to(device)
-            embedded = embedded.to(device)
-        encoded = self.cam_pos_embedder(embedded)  # Shape: (batch_size, 768)
+            #embedded = embedded.to(device)
+            pitch = pitch.to(device)
+            yaw = yaw.to(device)
+        #print(yaw,pitch)
+        encoded = self.cam_pos_embedder(yaw, pitch)  # Shape: (batch_size, 768)
         encoded = encoded.unsqueeze(0)
         #print(encoded.shape)
         #print("pos_encoded", encoded.shape)
@@ -2061,7 +2072,7 @@ class StableDiffusion3Pipeline_pos(DiffusionPipeline, SD3LoraLoaderMixin, FromSi
                 original_prompt_embeds = prompt_embeds
                 original_pooled_prompt_embeds = pooled_prompt_embeds
             #modified by me
-            negative_prompt_embeds = torch.nn.functional.pad(negative_prompt_embeds, (0, 0, 0, 6))
+            negative_prompt_embeds = torch.nn.functional.pad(negative_prompt_embeds, (0, 0, 0, 2))
             prompt_embeds = torch.cat([negative_prompt_embeds, prompt_embeds], dim=0)
             pooled_prompt_embeds = torch.cat([negative_pooled_prompt_embeds, pooled_prompt_embeds], dim=0)
 

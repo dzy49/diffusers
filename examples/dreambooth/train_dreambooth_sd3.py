@@ -29,9 +29,11 @@ import numpy as np
 import torch
 import torch.utils.checkpoint
 import transformers
-from accelerate import Accelerator
+from datetime import timedelta
+
+from accelerate import Accelerator 
 from accelerate.logging import get_logger
-from accelerate.utils import DistributedDataParallelKwargs, ProjectConfiguration, set_seed
+from accelerate.utils import DistributedDataParallelKwargs, ProjectConfiguration, set_seed, InitProcessGroupKwargs
 from huggingface_hub import create_repo, upload_folder
 from huggingface_hub.utils import insecure_hashlib
 from PIL import Image
@@ -193,9 +195,9 @@ def log_validation(
 
     # run inference
     
-    generator = torch.Generator(d).manual_seed(args.seed) if args.seed else None
-    print(args.seed)
-    print(generator)
+    
+    #print(args.seed)
+    #print(generator)
     autocast_ctx = torch.autocast(accelerator.device.type) if not is_final_validation else nullcontext()
     #autocast_ctx = nullcontext()
     #print("pipeline_args", pipeline_args)
@@ -203,36 +205,42 @@ def log_validation(
         images = []
         captions = []
         for prompt in pipeline_args:
-            for _ in range(2):
+            generator = torch.Generator(d).manual_seed(args.seed) if args.seed else None
+            for _ in range(1):
                 generator_c = generator.clone_state()
-                images.append(pipeline(prompt=prompt, pitch=math.radians(0), yaw=math.radians(-80),
+                images.append(pipeline(prompt=prompt, pitch=math.radians(0), yaw=math.radians(-60),
                                        lx=-50/185,ly=30/185,lz=-130/185,
                                        l_intensity=100/120, l_temp=(6700-2700)/4300, focal_len=(80-20)/80,
                                        emotion=[0.2,0.8,0,0,0,0,0], generator=generator).images[0])
-                captions.append("prompt: "+prompt+" pitch: 0 yaw: -80")
-                for angle in range(-60,100,20):
+                captions.append("prompt: "+prompt+" pitch: 0 yaw: -60")
+                print(captions[-1])
+                for angle in range(-40,80,20):
                     generator_c1 = generator_c.clone_state()
-                    generator_c2 = generator_c.clone_state()
+                    #generator_c2 = generator_c.clone_state()
                     images.append(pipeline(prompt=prompt, pitch=math.radians(0), yaw=math.radians(angle),
                                        lx=-50/185,ly=30/185,lz=-130/185,
                                        l_intensity=100/120, l_temp=(6700-2700)/4300, focal_len=(80-20)/80,
                                        emotion=[0.2,0.8,0,0,0,0,0], generator=generator_c1).images[0])
                     captions.append("prompt: "+prompt+" pitch:"+str(0)+"yaw: "+str(angle))
-            for _ in range(2):
+                    print(captions[-1])
+            for _ in range(1):
                 generator_c = generator.clone_state()
-                images.append(pipeline(prompt=prompt, pitch=math.radians(-50), yaw=math.radians(0),
+                images.append(pipeline(prompt=prompt, pitch=math.radians(-40), yaw=math.radians(0),
                                        lx=-50/185,ly=30/185,lz=-130/185,
                                        l_intensity=100/120, l_temp=(6700-2700)/4300, focal_len=(80-20)/80,
                                        emotion=[0.2,0.8,0,0,0,0,0], generator=generator).images[0])
-                captions.append("prompt: "+prompt+" pitch: -50 yaw: 0")
-                for angle in range(-40,60,10):
+                captions.append("prompt: "+prompt+" pitch: -40 yaw: 0")
+                print(captions[-1])
+                for angle in range(-30,50,10):
+
                     generator_c1 = generator_c.clone_state()
-                    generator_c2 = generator_c.clone_state()
+                    #generator_c2 = generator_c.clone_state()
                     images.append(pipeline(prompt=prompt, pitch=math.radians(angle), yaw=math.radians(0),
                                        lx=-50/185,ly=30/185,lz=-130/185,
                                        l_intensity=100/120, l_temp=(6700-2700)/4300, focal_len=(80-20)/80,
                                        emotion=[0.2,0.8,0,0,0,0,0], generator=generator_c1).images[0])
                     captions.append("prompt: "+prompt+" pitch:"+str(angle)+"yaw: "+str(0))
+                    print(captions[-1])
 
                 #images.append(pipeline(prompt=prompt, pitch=0, yaw=0, negative_prompt="rendering, 3D", generator=generator_1).images[0])
             #images = [pipeline({"prompt":prompt}, generator=generator).images[0] for _ in range(args.num_validation_images)]
@@ -803,8 +811,8 @@ class DreamBoothDataset(Dataset):
             df_cam = pd.read_csv("/proj/vondrick2/zd2286/data/ueg/df_am.csv")
             #df_cam2 = pd.read_csv("/proj/vondrick2/zd2286/data/ueg/cam_pos_20_21.csv")
 
-            self.yaw = [x-270 for x in df_cam['yaw'].tolist()]
-            self.pitch = df_cam['pitch'].tolist()
+            self.yaw = [math.radians(x-270) for x in df_cam['yaw'].tolist()]
+            self.pitch = [math.radians(x) for x in df_cam['pitch'].tolist()]
             df_cam["emotion_encoding"] = df_cam.apply(lambda row: encode_emotion(row["emo_c"], row["emo_int"]), axis=1)
             self.emotion = df_cam["emotion_encoding"].tolist()
             self.light_intensity = [x/120 for x in df_cam['intensity']]
@@ -891,8 +899,8 @@ class DreamBoothDataset(Dataset):
         example = {}
         instance_image = self.pixel_values[index % self.num_instance_images]
         example["instance_images"] = instance_image
-        example["camera_pitch"] = math.radians(self.pitch[index])
-        example["camera_yaw"] = math.radians(self.yaw[index])
+        example["camera_pitch"] = self.pitch[index]
+        example["camera_yaw"] = self.yaw[index]
         example["lx"] = self.lx[index]
         example["ly"] = self.ly[index]
         example["lz"] = self.lz[index]
@@ -1055,11 +1063,11 @@ def _encode_prompt_with_clip(
     return prompt_embeds, pooled_prompt_embeds
 
 class CameraPosEmbedder(nn.Module):
-    def __init__(self, output_dim=768):
+    def __init__(self, output_dim=2048):
         super().__init__()
         #self.linear = nn.Linear(1, output_dim)
-        self.layers = nn.ModuleList([
-            nn.Linear(1, 128),
+        self.layers_yaw = nn.ModuleList([
+            nn.Linear(3, 128),
             nn.GELU(),
             nn.Linear(128, 256),
             nn.GELU(),
@@ -1067,14 +1075,39 @@ class CameraPosEmbedder(nn.Module):
             nn.GELU(),
             nn.Linear(512, 1024),
             nn.GELU(),
-            nn.Linear(1024, output_dim)
         ])
-    def forward(self, x):
+
+        self.layers_pitch = nn.ModuleList([
+            nn.Linear(3, 128),
+            nn.GELU(),
+            nn.Linear(128, 256),
+            nn.GELU(),
+            nn.Linear(256, 512),
+            nn.GELU(),
+            nn.Linear(512, 1024),
+            nn.GELU(),
+        ])
+
+        self.fusion = nn.Linear(1024, output_dim)
+
+
+    def forward(self, yaw, pitch):
         # x shape: (batch_size, 4) or (4,)
         #return self.linear(x)
-        for layer in self.layers:
-            x = layer(x)
-        return x
+        
+        for layer in self.layers_yaw:
+            yaw = layer(yaw)
+        
+        for layer in self.layers_pitch:
+            pitch = layer(pitch)
+
+        yaw = yaw.unsqueeze(-2)
+        pitch = pitch.unsqueeze(-2)
+        #print(yaw.shape)
+        combined = torch.cat([yaw, pitch], dim=-2)  # (batch_size, output_dim)
+        #print(combined.shape)
+        fused = self.fusion(combined)
+        return fused
     
 def encode_camera_pos(camera_pos_embedder, yaw, pitch, lx, ly, lz, l_intensity, l_temp, focal_len, emotion,  device=None):
     """
@@ -1110,29 +1143,33 @@ def encode_camera_pos(camera_pos_embedder, yaw, pitch, lx, ly, lz, l_intensity, 
     #yaw, pitch = pos[..., 0], pos[..., 1]
     
     # Compute trig encoding for full batch
-    embedded = torch.stack([
-        yaw,
-        torch.sin(yaw),
-        torch.cos(yaw),
-        pitch,
-        torch.sin(pitch),
-        torch.cos(pitch),
-        # lx,
-        # ly,
-        # lz,
-        # l_intensity,
-        # l_temp,
-        # focal_len,
-    ], dim=-1) 
+    with torch.no_grad():
+        yaw = torch.stack([
+            yaw,
+            torch.sin(yaw),
+            torch.cos(yaw),
+            # lx,
+            # ly,
+            # lz,
+            # l_intensity,
+            # l_temp,
+            # focal_len,
+        ], dim=-1) 
+        pitch = torch.stack([
+           pitch,
+           torch.sin(pitch),
+           torch.cos(pitch),
+        ], dim=-1)
     # embedded = torch.cat((embedded, emotion), dim=-1)
      # Shape: (batch_size, 4)
     #print("pos_emebed", embedded.shape)
     # Project to higher dimension
     if device is not None:
         camera_pos_embedder = camera_pos_embedder.to(device)
-        embedded = embedded.to(device)
-    embedded = torch.unsqueeze(embedded, -1)
-    encoded = camera_pos_embedder(embedded)  # Shape: (batch_size, 768)
+        pitch = pitch.to(device)
+        yaw = yaw.to(device)
+    #embedded = torch.unsqueeze(embedded, -1)
+    encoded = camera_pos_embedder(yaw, pitch)  # Shape: (batch_size, 768)
     #encoded = encoded.unsqueeze(0)
     #print("pos_encoded", encoded.shape)
     # Remove batch dimension if input was unbatched
@@ -1190,8 +1227,7 @@ def encode_prompt(
 
 
 def main(args):
-    camera_embedder = CameraPosEmbedder(output_dim=2048)  # Match CLIP hidden size
-    camera_embedder.train()
+    
     if args.report_to == "wandb" and args.hub_token is not None:
         raise ValueError(
             "You cannot use both --report_to=wandb and --hub_token due to a security risk of exposing your token."
@@ -1213,7 +1249,7 @@ def main(args):
         mixed_precision=args.mixed_precision,
         log_with=args.report_to,
         project_config=accelerator_project_config,
-        kwargs_handlers=[kwargs],
+        kwargs_handlers=[kwargs, InitProcessGroupKwargs(timeout=timedelta(seconds=30 * 60))],
     )
 
     # Disable AMP for MPS.
@@ -1346,12 +1382,16 @@ def main(args):
     vae.to(accelerator.device, dtype=torch.float32)
 
     transformer = SD3Transformer2DModel.from_pretrained(
-        args.pretrained_model_name_or_path, subfolder="transformer", revision=args.revision, variant=args.variant
+        args.pretrained_model_name_or_path, subfolder="transformer", revision=args.revision, variant=args.variant,
+        low_cpu_mem_usage=False, device_map=None
     )
-
-    transformer.requires_grad_(True)
+    cam_pos_embedder = transformer.cam_pos_embedder
+    #cam_pos_embedder = CameraPosEmbedder()
     
-    camera_embedder.requires_grad_(True)
+    transformer.requires_grad_(True)
+    cam_pos_embedder.requires_grad_(True)
+    #cam_pos_embedder.train()
+    
     if args.train_text_encoder:
         text_encoder_one.requires_grad_(True)
         text_encoder_two.requires_grad_(True)
@@ -1461,7 +1501,13 @@ def main(args):
         )
 
     # Optimization parameters
-    transformer_parameters_with_lr = {"params": transformer.parameters(), "lr": args.learning_rate}
+    transformer_parameters_with_lr = {"params": [
+            p
+            for n, p in transformer.named_parameters()
+            if "cam_pos_embedder" not in n
+        ], 
+        "lr": args.learning_rate}
+    
     if args.train_text_encoder:
         # different learning rate for text encoder and unet
         text_parameters_one_with_lr = {
@@ -1487,7 +1533,7 @@ def main(args):
         ]
     else:
         cam_embedder_parameters_with_lr = {
-            "params": camera_embedder.parameters(),
+            "params": cam_pos_embedder.parameters(),
             "weight_decay": 0.1,
             "lr": args.learning_rate*50.0,
         }
@@ -1597,7 +1643,7 @@ def main(args):
                 pooled_prompt_embeds = pooled_prompt_embeds.to(accelerator.device)
             if camera_yaw is not None:
             # Encode camera position
-                camera_embedding = encode_camera_pos(camera_embedder, camera_yaw, camera_pitch,
+                camera_embedding = encode_camera_pos(cam_pos_embedder, camera_yaw, camera_pitch,
                                                     lx, ly, lz, l_intensity, l_temp, focal_len,
                                                     emotion, device=accelerator.device)
                 # Add to each token embedding
@@ -1695,12 +1741,12 @@ def main(args):
             lr_scheduler,
         )
     else:
-        # transformer, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(
-        #     transformer, optimizer, train_dataloader, lr_scheduler
-        # )
-        transformer, camera_embedder, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(
-            transformer, camera_embedder, optimizer, train_dataloader, lr_scheduler
+        transformer, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(
+            transformer, optimizer, train_dataloader, lr_scheduler
         )
+        # transformer, cam_pos_embedder, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(
+        #     transformer, cam_pos_embedder, optimizer, train_dataloader, lr_scheduler
+        # )
     # We need to recalculate our total training steps as the size of the training dataloader may have changed.
     num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
     if overrode_max_train_steps:
@@ -1783,7 +1829,7 @@ def main(args):
             text_encoder_three.train()
 
         for step, batch in enumerate(train_dataloader):
-            models_to_accumulate = [transformer, camera_embedder]
+            models_to_accumulate = [transformer, cam_pos_embedder]
             if args.train_text_encoder:
                 models_to_accumulate.extend([text_encoder_one, text_encoder_two, text_encoder_three])
             with accelerator.accumulate(models_to_accumulate):
@@ -1914,7 +1960,7 @@ def main(args):
                         else (
                             itertools.chain(
                             transformer.parameters(),
-                            #camera_embedder.parameters(),
+                            #cam_pos_embedder.parameters(),
                         )
                     ))
                     accelerator.clip_grad_norm_(params_to_clip, args.max_grad_norm)
@@ -1961,6 +2007,7 @@ def main(args):
             if global_step >= args.max_train_steps:
                 break
 
+        #accelerator.wait_for_everyone()            
         if accelerator.is_main_process:
             if args.validation_prompt is not None and epoch % args.validation_epochs == 0:
                 # create pipeline
@@ -1981,9 +2028,9 @@ def main(args):
                     revision=args.revision,
                     variant=args.variant,
                     torch_dtype=weight_dtype,
-                    cam_pos_embedder=accelerator.unwrap_model(camera_embedder),
+                    #cam_pos_embedder=accelerator.unwrap_model(cam_pos_embedder),
                 )
-                inference_prompt = ["a realistic photo of white woman"]
+                inference_prompt = ["a realistic photo of white woman","a realistic photo of man"]
                 #pipeline_args = {"prompt": args.validation_prompt}
                 pipeline_copy = copy.deepcopy(pipeline)
                 images = log_validation(
